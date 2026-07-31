@@ -36,27 +36,44 @@ class AutoTrader:
         self.end_date = end_date
         self.data = self.fetch_data()
         self.model = None
+        self.scaler = None
 
     def fetch_data(self):
-        raw = yf.download(self.tickers, start=self.start_date, end=self.end_date)['Adj Close']
+        # auto_adjust=True is yfinance's default now and drops the separate
+        # 'Adj Close' column, folding the adjustment into 'Close' instead.
+        raw = yf.download(
+            self.tickers, start=self.start_date, end=self.end_date, auto_adjust=True
+        )['Close']
         returns = np.log(raw / raw.shift(1)).dropna()
         return returns
 
     def engineer_features(self):
-        df = self.data.copy()
-        df['Volatility'] = df.rolling(window=5).std()
-        df['Momentum'] = df - df.shift(5)
-        df['Target'] = np.where(df.shift(-1).mean(axis=1) > df.mean(axis=1), 1, 0)
-        df = df.dropna()
-        return df
+        # self.data has one column per ticker, so the rolling stats have to be
+        # built per ticker -- assigning a multi-column frame to a single column
+        # ('Volatility', 'Momentum') is a ValueError.
+        returns = self.data
+        df = returns.add_suffix('_return')
+
+        for ticker in returns.columns:
+            df[f'{ticker}_volatility'] = returns[ticker].rolling(window=5).std()
+            df[f'{ticker}_momentum'] = returns[ticker] - returns[ticker].shift(5)
+
+        # 1 when tomorrow's average return across the basket beats today's.
+        df['Target'] = np.where(
+            returns.shift(-1).mean(axis=1) > returns.mean(axis=1), 1, 0
+        )
+        return df.dropna()
 
     def train_model(self):
         df = self.engineer_features()
         X = df.drop('Target', axis=1).values
         y = df['Target'].values
 
-        scaler = StandardScaler()
-        X = scaler.fit_transform(X)
+        # Kept on the instance: make_decision has to apply the *training*
+        # scaler. Re-fitting on the single most recent row would centre that
+        # row on itself and hand the model an all-zero feature vector.
+        self.scaler = StandardScaler()
+        X = self.scaler.fit_transform(X)
 
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
 
@@ -92,7 +109,7 @@ class AutoTrader:
 
     def make_decision(self):
         latest_data = self.engineer_features().iloc[-1:].drop('Target', axis=1)
-        latest_data_scaled = StandardScaler().fit_transform(latest_data)
+        latest_data_scaled = self.scaler.transform(latest_data.values)
         latest_tensor = torch.FloatTensor(latest_data_scaled)
         self.model.eval()
         with torch.no_grad():

@@ -1,66 +1,59 @@
+# autotrader-ai
 
-# 🧠 AutoTrader-AI: Autonomous Trading Agent with Deep Learning
+A small PyTorch classifier that tries to predict whether tomorrow's average return across a basket
+of tickers will beat today's, trained on log returns pulled from Yahoo Finance.
 
-AutoTrader-AI is a cutting-edge Python project that fuses finance, artificial intelligence, and deep learning to create an autonomous stock market prediction and decision-making system.
+This is a learning exercise in wiring up the whole pipeline — fetch, feature-engineer, train,
+evaluate, predict — not a trading system. The "Honest evaluation" section below explains why its
+reported accuracy is not what it looks like.
 
-Built with `PyTorch`, `Yahoo Finance`, and real historical stock data, this AI-powered agent:
-- Predicts market direction using a custom neural network
-- Makes intelligent buy/sell decisions based on engineered indicators
-- Visualizes performance and trends
-- Is fully extensible for real-time deployment or dashboard visualization
+## Running it
 
----
-
-## 🚀 Features
-
-- 🔎 **Market Data Ingestion** — Fetches live historical stock prices using `yfinance`
-- 🧮 **Feature Engineering** — Volatility, momentum, and log returns
-- 🧠 **Neural Network Prediction** — Built in PyTorch for classifying price movement
-- 📊 **Model Evaluation** — Confusion matrix, precision, recall, F1
-- 📈 **Decision Engine** — Makes intelligent BUY/SELL decisions
-- 🎨 **Visualization** — Plots historical returns and model output
-
----
-
-## 🧑‍💻 Technologies Used
-
-- Python 3.8+
-- PyTorch
-- Pandas / NumPy
-- yFinance
-- Matplotlib / Seaborn
-- Scikit-learn
-
----
-
-## 📂 Project Structure
-```
-autotrader-ai/ 
-├── autotrader.py # Main script: modeling, training, evaluation, decision 
-├── requirements.txt # All dependencies 
-├── README.md # Project description 
-└── models/ # (Optional) Saved model state_dict
-```
-
----
-
-## 🧪 Getting Started
-
-### 1. Clone the repo
-
-```bash
-git clone https://github.com/brettadams0/autotrader-ai.git
-cd autotrader-ai
-```
-2. Install dependencies
-```bash
+```sh
 pip install -r requirements.txt
-```
-3. Run the AI Trader
-
-```bash
-python autotrader.py
+python main.py
 ```
 
-### 📜 License
-MIT License. Use responsibly. This is for educational purposes only — not financial advice.
+Out of the box it pulls `AAPL`, `MSFT` and `GOOGL` from 2015-01-01 to today, trains for 100 epochs,
+prints a confusion matrix and classification report, prints a BUY/SELL call for the most recent bar,
+and opens a matplotlib window of the historical log returns. Edit the `tickers` and `start_date`
+values at the bottom of `main.py` to change that.
+
+Needs network access for the `yfinance` download.
+
+## How it works
+
+| Stage | |
+|---|---|
+| `fetch_data` | Downloads adjusted closes and converts them to daily log returns |
+| `engineer_features` | Per ticker: the return, a 5-day rolling standard deviation, and 5-day momentum |
+| `train_model` | Standard-scales, splits 80/20 without shuffling, trains a 128→64→2 MLP with dropout, Adam, cross-entropy |
+| `evaluate` | Confusion matrix and per-class precision/recall/F1 on the held-out tail |
+| `make_decision` | Applies the *training* scaler to the latest row and reports BUY or SELL |
+
+The train/test split is deliberately `shuffle=False` — shuffling time series would let the model
+train on data from after the test period.
+
+## Honest evaluation
+
+The accuracy this prints is inflated by how the label is constructed, and it is worth understanding
+before reading anything into it.
+
+`Target` is `1` when the mean return at `t+1` exceeds the mean return at `t`, while the features at
+row `t` include the returns at `t`. Daily returns are close to zero-mean, so an unusually large
+up-day at `t` makes "`t+1` is lower than `t`" nearly certain — regardless of anything about the
+market. The model can score well by learning that arithmetic relationship.
+
+Running this pipeline against a synthetic random walk — data with no predictable structure at all,
+by construction — still yields about 71% accuracy. That is the size of the artifact. A genuine
+evaluation would need a label defined purely on future data (for example, the sign of the return at
+`t+1`), and a baseline comparison against always predicting the majority class.
+
+## Scope
+
+Educational. It has no backtest, no transaction costs, no position sizing, and no risk management,
+and it does not save or reload a trained model. Not financial advice.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
